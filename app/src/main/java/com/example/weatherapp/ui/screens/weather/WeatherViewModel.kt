@@ -2,41 +2,70 @@ package com.example.weatherapp.ui.screens.weather
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.weatherapp.BuildConfig
-import com.example.weatherapp.data.model.WeatherResponse
+import com.example.weatherapp.data.model.WeatherCacheEntity
 import com.example.weatherapp.data.repository.WeatherRepository
 import com.example.weatherapp.util.Result
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class WeatherViewModel(
-    private val repository: WeatherRepository = WeatherRepository()
+    private val repo: WeatherRepository
 ) : ViewModel() {
 
-    private val _searchQuery = MutableStateFlow("")
+    private val _searchQuery = MutableStateFlow("helsinki")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
 
-    // Aloita "idle"-tyyppisesti error-tekstillä, ettei spinneri pyöri heti
-    private val _weatherState =
-        MutableStateFlow<Result<WeatherResponse>>(Result.Error("Syötä kaupunki."))
-    val weatherState: StateFlow<Result<WeatherResponse>> = _weatherState.asStateFlow()
+    // Room Flow (UI näyttää aina Roomista)
+    private val cacheFlow: Flow<WeatherCacheEntity?> =
+        searchQuery
+            .map { it.trim().lowercase() }
+            .distinctUntilChanged()
+            .flatMapLatest { key ->
+                if (key.isBlank()) flowOf(null) else repo.observeWeather(key)
+            }
 
-    fun onSearchQueryChange(query: String) {
-        _searchQuery.value = query
+    private val _weatherState = MutableStateFlow<Result<WeatherCacheEntity>>(Result.Loading)
+    val weatherState: StateFlow<Result<WeatherCacheEntity>> = _weatherState.asStateFlow()
+
+    init {
+        // Kun Room-cache päivittyy, pusketaan Success UI:lle
+        viewModelScope.launch {
+            cacheFlow.collect { cache ->
+                if (cache != null) _weatherState.value = Result.Success(cache)
+            }
+        }
+    }
+
+    fun onSearchQueryChange(value: String) {
+        _searchQuery.value = value
     }
 
     fun searchWeather() {
-        val city = _searchQuery.value.trim()
-        if (city.isBlank()) {
-            _weatherState.value = Result.Error("Syötä kaupunki.")
+        val q = _searchQuery.value.trim()
+        if (q.isBlank()) {
+            _weatherState.value = Result.Error("Syötä kaupunki")
             return
         }
 
         viewModelScope.launch {
             _weatherState.value = Result.Loading
-            _weatherState.value = repository.getWeather(city, BuildConfig.OPENWEATHER_API_KEY)
+            try {
+                repo.refreshIfNeeded(q)
+
+                // Jos cache oli jo tuore eikä muuttunut, varmistetaan ettei jää Loading-tilaan
+                val cache = repo.getCacheOnce(q)
+                if (cache != null) _weatherState.value = Result.Success(cache)
+                else _weatherState.value = Result.Error("Ei dataa välimuistissa")
+            } catch (t: Throwable) {
+                val cache = repo.getCacheOnce(q)
+                _weatherState.value =
+                    if (cache != null) Result.Success(cache)
+                    else Result.Error(t.message ?: "Virhe haettaessa säätä")
+            }
         }
     }
+
+    // Historian käyttö. Ei implementoitu
+    val history = repo.observeHistory()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 }
