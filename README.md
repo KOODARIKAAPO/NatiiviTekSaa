@@ -192,3 +192,5 @@ Verrataan ikää TTL-arvoon joka tässä sovelluksessa 30 min.
 
 ---
 
+https://youtu.be/Xm81ssjBuD8
+
