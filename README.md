@@ -97,7 +97,7 @@ Projektisi rakenne
 
 Sovellus on rakennettu MVVM arkkitehtuurin mukaisesti.
 
-data/local, 
+data/local/model, 
 sisältää Room-tietokannan: 
 -entity-luokat 
 -DAO
